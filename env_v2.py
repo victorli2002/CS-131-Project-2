@@ -16,3 +16,6 @@ class EnvironmentManager:
   # Sets the data associated with a variable name
   def set(self, symbol, value):
     self.environment[symbol] = value
+  
+  def has_var(self, symbol):
+    return symbol in self.environment

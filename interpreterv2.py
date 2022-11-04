@@ -1,8 +1,8 @@
 from enum import Enum
 from intbase import InterpreterBase, ErrorType
-from env_v1 import EnvironmentManager
+from env_v2 import EnvironmentManager
 from tokenize import Tokenizer
-from func_v1 import FunctionManager
+from func_v2 import FunctionManager
 
 # Enumerated type for our different language data types
 class Type(Enum):
@@ -42,7 +42,7 @@ class Interpreter(InterpreterBase):
     self.ip = self._find_first_instruction(InterpreterBase.MAIN_FUNC)
     self.return_stack = []
     self.terminate = False
-    self.env_manager = EnvironmentManager() # used to track variables/scope
+    self.global_env = EnvironmentManager() # used to track variables/scope
 
     # main interpreter run loop
     while not self.terminate:
@@ -59,6 +59,8 @@ class Interpreter(InterpreterBase):
     args = tokens[1:]
 
     match tokens[0]:
+      case InterpreterBase.VAR_DEF:
+        self._vardef(args)
       case InterpreterBase.ASSIGN_DEF:
         self._assign(args)
       case InterpreterBase.FUNCCALL_DEF:
@@ -83,17 +85,38 @@ class Interpreter(InterpreterBase):
   def _blank_line(self):
     self._advance_to_next_statement()
 
+  def _vardef(self, args):
+    type = args[0]
+    for a in args[1:]:
+      if self.global_env.has_var(a):
+        super().error(ErrorType.NAME_ERROR,f"Cannot redefine variables in the same block", self.ip)
+      match type:
+        case InterpreterBase.INT_DEF:
+          #print("HELLO ", a)
+          self.global_env.set(a,Value(Type.INT, 0))
+        case InterpreterBase.BOOL_DEF:
+          self.global_env.set(a,Value(Type.BOOL, InterpreterBase.FALSE_DEF))
+        case InterpreterBase.STRING_DEF:
+          self.global_env.set(a,Value(Type.STRING, ""))
+        case default:
+          raise Exception(f'Unknown type: {type}')
+    self._advance_to_next_statement()
+
   def _assign(self, tokens):
-   if len(tokens) < 2:
-     super().error(ErrorType.SYNTAX_ERROR,"Invalid assignment statement") #no
-   vname = tokens[0]
-   value_type = self._eval_expression(tokens[1:])
-   self._set_value(tokens[0], value_type)
-   self._advance_to_next_statement()
+    if len(tokens) < 2:
+      super().error(ErrorType.SYNTAX_ERROR,f"Invalid assignment statement", self.ip) #no
+    vname = tokens[0]
+    value_type = self._eval_expression(tokens[1:])
+    if self.global_env.has_var(vname) == False:
+      super().error(ErrorType.NAME_ERROR,f"Cannot reference variable without defining it", self.ip)
+    if (self._get_value(vname)).type() != value_type.type():
+      super().error(ErrorType.TYPE_ERROR,f"Incompatible assignment", self.ip)
+    self._set_value(vname, value_type)
+    self._advance_to_next_statement()
 
   def _funccall(self, args):
     if not args:
-      super().error(ErrorType.SYNTAX_ERROR,"Missing function name to call", self.ip) #!
+      super().error(ErrorType.SYNTAX_ERROR,f"Missing function name to call", self.ip) #!
     if args[0] == InterpreterBase.PRINT_DEF:
       self._print(args[1:])
       self._advance_to_next_statement()
@@ -115,10 +138,10 @@ class Interpreter(InterpreterBase):
 
   def _if(self, args):
     if not args:
-      super().error(ErrorType.SYNTAX_ERROR,"Invalid if syntax", self.ip) #no
+      super().error(ErrorType.SYNTAX_ERROR,f"Invalid if syntax", self.ip) #no
     value_type = self._eval_expression(args)
     if value_type.type() != Type.BOOL:
-      super().error(ErrorType.TYPE_ERROR,"Non-boolean if expression", self.ip) #!
+      super().error(ErrorType.TYPE_ERROR,f"Non-boolean if expression", self.ip) #!
     if value_type.value():
       self._advance_to_next_statement()
       return
@@ -130,7 +153,7 @@ class Interpreter(InterpreterBase):
         if (tokens[0] == InterpreterBase.ENDIF_DEF or tokens[0] == InterpreterBase.ELSE_DEF) and self.indents[self.ip] == self.indents[line_num]:
           self.ip = line_num + 1
           return
-    super().error(ErrorType.SYNTAX_ERROR,"Missing endif", self.ip) #no
+    super().error(ErrorType.SYNTAX_ERROR,f"Missing endif", self.ip) #no
 
   def _endif(self):
     self._advance_to_next_statement()
@@ -143,7 +166,7 @@ class Interpreter(InterpreterBase):
       if tokens[0] == InterpreterBase.ENDIF_DEF and self.indents[self.ip] == self.indents[line_num]:
           self.ip = line_num + 1
           return
-    super().error(ErrorType.SYNTAX_ERROR,"Missing endif", self.ip) #no
+    super().error(ErrorType.SYNTAX_ERROR,f"Missing endif", self.ip) #no
 
   def _return(self,args):
     if not args:
@@ -155,10 +178,10 @@ class Interpreter(InterpreterBase):
 
   def _while(self, args):
     if not args:
-      super().error(ErrorType.SYNTAX_ERROR,"Missing while expression", self.ip) #no
+      super().error(ErrorType.SYNTAX_ERROR,f"Missing while expression", self.ip) #no
     value_type = self._eval_expression(args)
     if value_type.type() != Type.BOOL:
-      super().error(ErrorType.TYPE_ERROR,"Non-boolean while expression", self.ip) #!
+      super().error(ErrorType.TYPE_ERROR,f"Non-boolean while expression", self.ip) #!
     if value_type.value() == False:
       self._exit_while()
       return
@@ -177,7 +200,7 @@ class Interpreter(InterpreterBase):
         break # syntax error!
       cur_line += 1
     # didn't find endwhile
-    super().error(ErrorType.SYNTAX_ERROR,"Missing endwhile", self.ip) #no
+    super().error(ErrorType.SYNTAX_ERROR,f"Missing endwhile", self.ip) #no
 
   def _endwhile(self, args):
     while_indent = self.indents[self.ip]
@@ -190,11 +213,11 @@ class Interpreter(InterpreterBase):
         break # syntax error!
       cur_line -= 1
     # didn't find while
-    super().error(ErrorType.SYNTAX_ERROR,"Missing while", self.ip) #no
+    super().error(ErrorType.SYNTAX_ERROR,f"Missing while", self.ip) #no
 
   def _print(self, args):
     if not args:
-      super().error(ErrorType.SYNTAX_ERROR,"Invalid print call syntax", self.ip) #no
+      super().error(ErrorType.SYNTAX_ERROR,f"Invalid print call syntax", self.ip) #no
     out = []
     for arg in args:
       val_type = self._get_value(arg)
@@ -209,10 +232,10 @@ class Interpreter(InterpreterBase):
 
   def _strtoint(self, args):
     if len(args) != 1:
-      super().error(ErrorType.SYNTAX_ERROR,"Invalid strtoint call syntax", self.ip) #no
+      super().error(ErrorType.SYNTAX_ERROR,f"Invalid strtoint call syntax", self.ip) #no
     value_type = self._get_value(args[0])
     if value_type.type() != Type.STRING:
-      super().error(ErrorType.TYPE_ERROR,"Non-string passed to strtoint", self.ip) #!
+      super().error(ErrorType.TYPE_ERROR,f"Non-string passed to strtoint", self.ip) #!
     self._set_value(InterpreterBase.RESULT_DEF, Value(Type.INT, int(value_type.value())))   # return always passed back in result
 
   def _advance_to_next_statement(self):
@@ -271,14 +294,18 @@ class Interpreter(InterpreterBase):
       return Value(Type.INT, int(token))
     if token == InterpreterBase.TRUE_DEF or token == InterpreterBase.FALSE_DEF:
       return Value(Type.BOOL, token == InterpreterBase.TRUE_DEF)
-    value = self.env_manager.get(token)
+    if self.global_env.has_var(token) == False:
+      super().error(ErrorType.NAME_ERROR,f"Cannot reference variable without defining it", self.ip)
+    value = self.global_env.get(token)
     if value  == None:
       super().error(ErrorType.NAME_ERROR,f"Unknown variable {token}", self.ip) #!
     return value
 
   # given a variable name and a Value object, associate the name with the value
   def _set_value(self, varname, value_type):
-    self.env_manager.set(varname,value_type)
+    if self.global_env.has_var(varname) == False:
+      super().error(ErrorType.NAME_ERROR,f"Cannot reference variable without defining it", self.ip)
+    self.global_env.set(varname,value_type)
 
   # evaluate expressions in prefix notation: + 5 * 6 x
   def _eval_expression(self, tokens):
