@@ -39,10 +39,12 @@ class Interpreter(InterpreterBase):
     self._compute_indentation(program)  # determine indentation of every line
     self.tokenized_program = Tokenizer.tokenize_program(program)
     self.func_manager = FunctionManager(self.tokenized_program)
+    self.env_stack = []
+    self.result_stack = []
     self.ip = self._find_first_instruction(InterpreterBase.MAIN_FUNC)
     self.return_stack = []
     self.terminate = False
-    self.global_env = EnvironmentManager() # used to track variables/scope
+    #self.global_env = EnvironmentManager() # used to track variables/scope
 
     # main interpreter run loop
     while not self.terminate:
@@ -66,7 +68,8 @@ class Interpreter(InterpreterBase):
       case InterpreterBase.FUNCCALL_DEF:
         self._funccall(args)
       case InterpreterBase.ENDFUNC_DEF:
-        self._endfunc()
+        #self._endfunc()
+        self._return(False)
       case InterpreterBase.IF_DEF:
         self._if(args)
       case InterpreterBase.ELSE_DEF:
@@ -88,17 +91,17 @@ class Interpreter(InterpreterBase):
   def _vardef(self, args):
     type = args[0]
     for a in args[1:]:
-      if self.global_env.has_var(a):
+      if self.env_stack[-1].has_var(a):
         super().error(ErrorType.NAME_ERROR,f"Cannot redefine variables in the same block", self.ip)
       match type:
         case InterpreterBase.INT_DEF:
           #print("HELLO ", a)
-          self.global_env.set(a,Value(Type.INT, 0))
+          self.env_stack[-1].set(a,Value(Type.INT, 0))
         case InterpreterBase.BOOL_DEF:
-          self.global_env.set(a,Value(Type.BOOL, InterpreterBase.FALSE_DEF))
+          self.env_stack[-1].set(a,Value(Type.BOOL, False))
         case InterpreterBase.STRING_DEF:
-          self.global_env.set(a,Value(Type.STRING, ""))
-        case default:
+          self.env_stack[-1].set(a,Value(Type.STRING, ""))
+        case _:
           raise Exception(f'Unknown type: {type}')
     self._advance_to_next_statement()
 
@@ -107,7 +110,7 @@ class Interpreter(InterpreterBase):
       super().error(ErrorType.SYNTAX_ERROR,f"Invalid assignment statement", self.ip) #no
     vname = tokens[0]
     value_type = self._eval_expression(tokens[1:])
-    if self.global_env.has_var(vname) == False:
+    if self.env_stack[-1].has_var(vname) == False:
       super().error(ErrorType.NAME_ERROR,f"Cannot reference variable without defining it", self.ip)
     if (self._get_value(vname)).type() != value_type.type():
       super().error(ErrorType.TYPE_ERROR,f"Incompatible assignment", self.ip)
@@ -128,7 +131,10 @@ class Interpreter(InterpreterBase):
       self._advance_to_next_statement()
     else:
       self.return_stack.append(self.ip+1)
-      self.ip = self._find_first_instruction(args[0])
+      if len(args) > 1:
+        self.ip = self._find_first_instruction(args[0], args[1:])
+      else:
+        self.ip = self._find_first_instruction(args[0])
 
   def _endfunc(self):
     if not self.return_stack:  # done with main!
@@ -169,12 +175,54 @@ class Interpreter(InterpreterBase):
     super().error(ErrorType.SYNTAX_ERROR,f"Missing endif", self.ip) #no
 
   def _return(self,args):
+    return_type = self.result_stack.pop()
+    def_result = 'no'
+
+    #handle default returns or evaluate argument
     if not args:
-      self._endfunc()
-      return
-    value_type = self._eval_expression(args)
-    self._set_value(InterpreterBase.RESULT_DEF, value_type)   # return always passed back in result
+      if return_type != InterpreterBase.VOID_DEF:
+        def_result = return_type
+      else:
+        self.env_stack.pop()
+        self._endfunc()
+        return
+    else:
+      value_type = self._eval_expression(args)
+
+    #go to outer environment
+    self.env_stack.pop()
+
+    #create result variable if it doesn't exist
+    match return_type:
+      case InterpreterBase.INT_DEF:
+        res = 'resulti'
+      case InterpreterBase.BOOL_DEF:
+        res = 'resultb'
+      case InterpreterBase.STRING_DEF:
+        res = 'results'
+      case InterpreterBase.VOID_DEF:        #error if we have any arguments for a void func
+        super().error(ErrorType.TYPE_ERROR,f"Invalid return type", self.ip)
+    if not self.env_stack[-1].has_var(res):
+      self._vardef([return_type, res])
+    
+    #default assignment (can reset result variable if it was something else)
+    if def_result != 'no':            
+      self._default_assignment(def_result)
+    #non-default assignment
+    else:
+      self._set_value(res, value_type)
     self._endfunc()
+
+  def _default_assignment(self, type):
+    match type:
+      case InterpreterBase.INT_DEF:
+        self.env_stack[-1].set("resulti", Value(Type.INT, 0))
+      case InterpreterBase.BOOL_DEF:
+        self.env_stack[-1].set("resultb", Value(Type.BOOL, False))
+      case InterpreterBase.STRING_DEF:
+        self.env_stack[-1].set("results", Value(Type.STRING, ""))
+      case _:
+        raise Exception(f'Unknown type: {type}')
 
   def _while(self, args):
     if not args:
@@ -228,7 +276,9 @@ class Interpreter(InterpreterBase):
     if args:
       self._print(args)
     result = super().get_input()
-    self._set_value(InterpreterBase.RESULT_DEF, Value(Type.STRING, result))   # return always passed back in result
+    if not self.env_stack[-1].has_var('results'):
+      self._default_assignment(InterpreterBase.STRING_DEF)
+    self._set_value('results', Value(Type.STRING, result))   # return always passed back in results
 
   def _strtoint(self, args):
     if len(args) != 1:
@@ -236,7 +286,9 @@ class Interpreter(InterpreterBase):
     value_type = self._get_value(args[0])
     if value_type.type() != Type.STRING:
       super().error(ErrorType.TYPE_ERROR,f"Non-string passed to strtoint", self.ip) #!
-    self._set_value(InterpreterBase.RESULT_DEF, Value(Type.INT, int(value_type.value())))   # return always passed back in result
+    if not self.env_stack[-1].has_var('resulti'):
+      self._default_assignment(InterpreterBase.INT_DEF)
+    self._set_value('resulti', Value(Type.INT, int(value_type.value())))   # return always passed back in result
 
   def _advance_to_next_statement(self):
     # for now just increment IP, but later deal with loops, returns, end of functions, etc.
@@ -278,10 +330,33 @@ class Interpreter(InterpreterBase):
   def _compute_indentation(self, program):
     self.indents = [len(line) - len(line.lstrip(' ')) for line in program]
 
-  def _find_first_instruction(self, funcname):
+  def _find_first_instruction(self, funcname, args = None):
     func_info = self.func_manager.get_function_info(funcname)
     if func_info == None:
       super().error(ErrorType.NAME_ERROR,f"Unable to locate {funcname} function", self.ip) #!
+    arg_vals = []
+    if args != None:
+      for a in args:
+        arg_vals.append(self._get_value(a))
+    self.env_stack.append(EnvironmentManager())
+    self.result_stack.append(func_info.return_type)
+    if args != None:
+      for i, a in enumerate(arg_vals):
+        name, type = func_info.args[i]
+        self._vardef([type, name])
+        match type:
+          case InterpreterBase.INT_DEF:
+            type = Type.INT
+          case InterpreterBase.BOOL_DEF:
+            type = Type.BOOL
+          case InterpreterBase.STRING_DEF:
+            type = Type.STRING
+          case _:
+            raise Exception(f'Unknown type: {type}')
+        if a.type() != type:
+          super().error(ErrorType.TYPE_ERROR,f"Incompatible parameter", self.ip)
+        self._set_value(name, a)
+    #gotta handle passing in vars here
     return func_info.start_ip
 
   # given a token name (e.g., x, 17, True, "foo"), give us a Value object associated with it
@@ -294,18 +369,20 @@ class Interpreter(InterpreterBase):
       return Value(Type.INT, int(token))
     if token == InterpreterBase.TRUE_DEF or token == InterpreterBase.FALSE_DEF:
       return Value(Type.BOOL, token == InterpreterBase.TRUE_DEF)
-    if self.global_env.has_var(token) == False:
+    if self.env_stack[-1].has_var(token) == False:
       super().error(ErrorType.NAME_ERROR,f"Cannot reference variable without defining it", self.ip)
-    value = self.global_env.get(token)
+    value = self.env_stack[-1].get(token)
     if value  == None:
       super().error(ErrorType.NAME_ERROR,f"Unknown variable {token}", self.ip) #!
     return value
 
   # given a variable name and a Value object, associate the name with the value
   def _set_value(self, varname, value_type):
-    if self.global_env.has_var(varname) == False:
+    if self.env_stack[-1].has_var(varname) == False:
       super().error(ErrorType.NAME_ERROR,f"Cannot reference variable without defining it", self.ip)
-    self.global_env.set(varname,value_type)
+    if self._get_value(varname).type() != value_type.type():
+      super().error(ErrorType.TYPE_ERROR,f"Mismatching variable type", self.ip)
+    self.env_stack[-1].set(varname,value_type)
 
   # evaluate expressions in prefix notation: + 5 * 6 x
   def _eval_expression(self, tokens):
@@ -320,6 +397,7 @@ class Interpreter(InterpreterBase):
         operations = self.binary_ops[v1.type()]
         if token not in operations:
           super().error(ErrorType.TYPE_ERROR,f"Operator {token} is not compatible with {v1.type()}", self.ip) #!
+        #print(v2.value(), v1.value(), v1.type(), v2.type(), v1.value() == False, v2.value() == False)
         stack.append(operations[token](v1,v2))
       elif token == '!':
         v1 = stack.pop()

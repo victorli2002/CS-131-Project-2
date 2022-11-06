@@ -3,8 +3,11 @@
 # anything you like. In our implementation we pass in a Value object which holds a type
 # and a value (e.g., Int, 10).
 class EnvironmentManager:
-  def __init__(self):
-    self.environment = {}
+  def __init__(self, args = None):
+    if args == None:
+      self.environment = {}
+    else:
+      self.environment = args
 
   # Gets the data associated a variable name
   def get(self, symbol):
