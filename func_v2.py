@@ -8,7 +8,6 @@ class FuncInfo:
   def __init__(self, start_ip, args, return_type ):
     self.start_ip = start_ip    # line number, zero-based
     self.return_type = return_type 
-    self.func_env = EnvironmentManager()
     self.args = args  # name, type
     #base, barebone environment only
     #HAVE TO CHANGE ALOT OF THIS SO THAT WE ACTUALLY GET THE FUNCCALL ARGUMENT INPUTS ARGH
