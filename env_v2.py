@@ -6,6 +6,7 @@ class EnvironmentManager:
   def __init__(self):
     self.layers = [{}]
     self.num_layers = 0
+    #we assume that all references are on the top level func scope
 
   # Gets the data associated a variable name
   def get(self, symbol):
@@ -13,12 +14,19 @@ class EnvironmentManager:
     while i >= 0:
       env = self.layers[i]
       if symbol in env:
-        return env[symbol]
+        try: #reference
+          ref_env, value = env[symbol]
+          return ref_env.get(value)
+        except: #value
+          return env[symbol]
       i -= 1
     return None
 
   # associates data with new var name
-  def new_var(self, symbol, value):
+  def new_var(self, symbol, value = None, ref = False, ref_env = None):
+    if ref: #reference
+      (self.layers[-1])[symbol] = (ref_env, value)
+      return
     (self.layers[-1])[symbol] = value
 
   # top level var
@@ -31,7 +39,11 @@ class EnvironmentManager:
     while i >= 0:
       env = self.layers[i]
       if symbol in env:
-        env[symbol] = value
+        try: #reference
+          ref_env, ref_to = env[symbol]
+          ref_env.change_var(ref_to, value)
+        except: #value
+          env[symbol] = value
         return
       i -= 1
     raise Exception(f'Unknown variable: {symbol}')

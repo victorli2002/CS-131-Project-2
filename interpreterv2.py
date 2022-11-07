@@ -96,7 +96,6 @@ class Interpreter(InterpreterBase):
         super().error(ErrorType.NAME_ERROR,f"Cannot redefine variables in the same block", self.ip)
       match type:
         case InterpreterBase.INT_DEF:
-          #print("HELLO ", a)
           self.env_stack[-1].new_var(a,Value(Type.INT, 0))
         case InterpreterBase.BOOL_DEF:
           self.env_stack[-1].new_var(a,Value(Type.BOOL, False))
@@ -235,7 +234,6 @@ class Interpreter(InterpreterBase):
     if value_type.value() == False:
       self._exit_while()
       return
-
     # If true, we advance to the next statement
     self.env_stack[-1].new_layer()
     self._advance_to_next_statement()
@@ -244,6 +242,9 @@ class Interpreter(InterpreterBase):
     while_indent = self.indents[self.ip]
     cur_line = self.ip + 1
     while cur_line < len(self.tokenized_program):
+      if len(self.tokenized_program[cur_line]) == 0:
+        cur_line += 1 
+        continue
       if self.tokenized_program[cur_line][0] == InterpreterBase.ENDWHILE_DEF and self.indents[cur_line] == while_indent:
         self.ip = cur_line + 1
         return
@@ -258,6 +259,9 @@ class Interpreter(InterpreterBase):
     while_indent = self.indents[self.ip]
     cur_line = self.ip - 1
     while cur_line >= 0:
+      if len(self.tokenized_program[cur_line]) == 0:
+        cur_line -= 1 
+        continue
       if self.tokenized_program[cur_line][0] == InterpreterBase.WHILE_DEF and self.indents[cur_line] == while_indent:
         self.ip = cur_line
         return
@@ -342,11 +346,28 @@ class Interpreter(InterpreterBase):
     if args != None:
       for a in args:
         arg_vals.append(self._get_value(a))
+    ref_env = self.env_stack[-1] if self.env_stack != [] else None
     self.env_stack.append(EnvironmentManager())
     self.result_stack.append(func_info.return_type)
     if args != None:
       for i, a in enumerate(arg_vals):
         name, type = func_info.args[i]
+        is_ref = func_info.refs[i]
+        if is_ref: #reference definition
+          if ref_env.has_var(args[i]):
+            match type:
+              case InterpreterBase.INT_DEF:
+                type = Type.INT
+              case InterpreterBase.BOOL_DEF:
+                type = Type.BOOL
+              case InterpreterBase.STRING_DEF:
+                type = Type.STRING
+              case _:
+                raise Exception(f'Unknown type: {type}')
+            if a.type() != type:
+              super().error(ErrorType.TYPE_ERROR,f"Incompatible parameter", self.ip)
+            self.env_stack[-1].new_var(name, args[i], True, ref_env)
+            continue
         self._vardef([type, name])
         match type:
           case InterpreterBase.INT_DEF:
@@ -401,7 +422,6 @@ class Interpreter(InterpreterBase):
         operations = self.binary_ops[v1.type()]
         if token not in operations:
           super().error(ErrorType.TYPE_ERROR,f"Operator {token} is not compatible with {v1.type()}", self.ip) #!
-        #print(v2.value(), v1.value(), v1.type(), v2.type(), v1.value() == False, v2.value() == False)
         stack.append(operations[token](v1,v2))
       elif token == '!':
         v1 = stack.pop()

@@ -5,12 +5,11 @@ from env_v2 import EnvironmentManager
 # Right now, the only thing this tracks is the line number of the first executable instruction
 # of the function (i.e., the line after the function prototype: func foo)
 class FuncInfo:
-  def __init__(self, start_ip, args, return_type ):
+  def __init__(self, start_ip, args, return_type, refs):
     self.start_ip = start_ip    # line number, zero-based
     self.return_type = return_type 
     self.args = args  # name, type
-    #base, barebone environment only
-    #HAVE TO CHANGE ALOT OF THIS SO THAT WE ACTUALLY GET THE FUNCCALL ARGUMENT INPUTS ARGH
+    self.refs = refs
 
 # FunctionManager keeps track of every function in the program, mapping the function name
 # to a FuncInfo object (which has the starting line number/instruction pointer) of that function.
@@ -30,9 +29,16 @@ class FunctionManager:
         func_name = line[1]
         return_type = line[-1]
         args = []
+        refs = []
         for a in line[2:-1]:
+          #assumes that we only get valid types
           name, type = a.split(":")
-          args.append((name, type))
-        func_info = FuncInfo(line_num + 1, args, return_type)   # function starts executing on line after funcdef
+          if type[0] == 'r':
+            args.append((name, type[3:]))
+            refs.append(True)
+          else:
+            args.append((name, type))
+            refs.append(False)
+        func_info = FuncInfo(line_num + 1, args, return_type, refs)   # function starts executing on line after funcdef
         self.func_cache[func_name] = func_info
 
